@@ -11,6 +11,13 @@ from stat import S_IREAD
 from threading import Thread
 
 
+'''Used as MACRO for treeview on gui'''
+OFF = 0
+ON = 1
+TRVIEW = 0
+SVCHANGES = 0
+DELAY = 60
+
 
 class GUI:
 
@@ -23,10 +30,13 @@ class GUI:
         self.menu = Menu( self.root )
 
         self.file_menu = Menu( self.menu, tearoff=0 )
-        self.file_menu.add_command(label="Exit", command=lambda: os.system("killall python"))
+        self.file_menu.add_separator()
+        self.file_menu.add_command( label="Exit", command=lambda: os.system("killall python") )
 
         self.view_menu = Menu( self.menu, tearoff=0 )
-        self.view_menu.add_command(label="TreeView", command="")
+        self.view_menu.add_command( label="Process view", command=lambda: self.tree_view_status() )
+        self.view_menu.add_command( label="Track tool", command=lambda: self.save_changes_status() )
+        self.view_menu.add_command( label="Refresh rate", command=lambda: self.refresh_list_delay() )
 
 
         self.menu.add_cascade(label="File", menu=self.file_menu)
@@ -43,9 +53,6 @@ class GUI:
         self.frame_button_process = Frame( self.frame_process )
         self.frame_button_process.pack( side = BOTTOM )
 
-        # self.frame_info_process = Frame( self.frame_process )
-        # self.frame_info_process.pack( side = BOTTOM )
-
 
         self.frame_service = Frame( self.notebook )
         self.frame_service.pack( side = RIGHT )
@@ -53,8 +60,6 @@ class GUI:
         self.frame_button_service = Frame( self.frame_service )
         self.frame_button_service.pack( side = BOTTOM )
 
-        # self.frame_info_service.pack( side = BOTTOM )
-        # self.frame_info_service = Frame( self.frame_service )
 
         self.notebook.add(self.frame_process, text="Processes")
         self.notebook.add(self.frame_service, text="Services")
@@ -123,12 +128,55 @@ class GUI:
 
         # write threads to text area & update every X seconds.
         try:
-            Thread(target=self.writeProcesses, args=(15, )).start()
-            Thread(target=self.writeServices, args=(15, )).start()
+            Thread(target=self.writeProcesses).start()
+            Thread(target=self.writeServices).start()
         except Exception, errtxt:
             print errtxt
 
         self.root.mainloop()
+
+
+    '''Set/Reset treeview to decadent mode'''
+    def tree_view_status( self ):
+        global TRVIEW, ON, OFF
+
+        if TRVIEW == ON:
+            result = tkMessageBox.askquestion("Change to list-view", "Are You Sure?", icon='warning')
+            if result == 'yes':
+                TRVIEW = OFF
+        else:
+            result = tkMessageBox.askquestion("Change to tree-view", "Are You Sure?", icon='warning')
+            if result == 'yes':
+                TRVIEW = ON
+
+
+    '''Save/Don't Save the changes that are created when on MODIFIED mode'''
+    def save_changes_status( self ):
+        global SVCHANGES, ON, OFF
+
+        if SVCHANGES == ON:
+            result = tkMessageBox.askquestion("Stop tracking", "Are You Sure?", icon='warning')
+            if result == 'yes':
+                SVCHANGES = OFF
+        else:
+            result = tkMessageBox.askquestion("Track modified lists", "Are You Sure?", icon='warning')
+            if result == 'yes':
+                SVCHANGES = ON
+
+
+    '''Modify DELAY global variable.'''
+    def refresh_list_delay( self ):
+        window = Toplevel()
+        window.title( "Seconds" )
+        box = Spinbox( window, from_=20, to=100, width=6 )
+        box.pack( side = LEFT )
+        Button( window, text="Okay", padx=20, command=lambda: self.set_delay(window, box) ).pack( side = LEFT )
+        window.mainloop()
+    def set_delay( self, window, box ):
+        global DELAY
+        DELAY = int(box.get())
+        print DELAY
+        window.destroy()
 
 
     """
@@ -139,43 +187,51 @@ class GUI:
     # input: 'delay' is the time that it prints a new list.
     # output: prints on text area the list of processes.
     """
-    def writeProcesses( self, delay ):
+    def writeProcesses( self ):
+        global TRVIEW, ON, OFF, DELAY
         while True:
             old_data = self.get_rows( "process" )
             self.trv_process.delete(*self.trv_process.get_children())
 
             process_list = list(psutil.process_iter())
             self.lbl_process_count.config( text="%s\t\t" % len(process_list) )
-            index = ""
+
             item_dictionary = {}
             for proc in process_list[:-1]:
-                process_pid = str(proc.as_dict(attrs=['pid']))[8:-1]
-                process_ppid = str(proc.as_dict(attrs=['ppid']))[9:-1]
-                process_name = str(proc.as_dict(attrs=['name']))[10:-2]
+                try:
+                    process_pid = str(proc.as_dict(attrs=['pid']))[8:-1]
+                    process_ppid = str(proc.as_dict(attrs=['ppid']))[9:-1]
+                    process_name = str(proc.as_dict(attrs=['name']))[10:-2]
 
-                if (process_ppid == "0"):
-                    item_dictionary[process_pid] = \
-                    self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name), open=True )
-                else:
-                    items = item_dictionary
-                    for key in items:
-                        if (key == process_ppid):
+                    if (TRVIEW == ON):
+                        if (process_ppid == "0"):
                             item_dictionary[process_pid] = \
-                            self.trv_process.insert( item_dictionary[key], index=END, text=process_pid, values=(process_ppid, process_name), open=True )
-                            break;
-
+                            self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name), open=True )
+                        else:
+                            items = item_dictionary
+                            for key in items:
+                                if (key == process_ppid):
+                                    item_dictionary[process_pid] = \
+                                    self.trv_process.insert( item_dictionary[key], index=END, text=process_pid, values=(process_ppid, process_name), open=True )
+                                    break
+                    else:
+                        self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name) )
+                except NoSuchProcess:
+                    pass
 
             process_pid = str(process_list[-1].as_dict(attrs=['pid']))[8:-1]
             process_ppid = str(process_list[-1].as_dict(attrs=['ppid']))[9:-1]
             process_name = str(process_list[-1].as_dict(attrs=['name']))[10:-2]
-            items = item_dictionary
-            for key in items:
-                if (key == process_ppid):
-                    item_dictionary[process_pid] = \
-                    self.trv_process.insert( item_dictionary[key], index=END, text=process_pid, values=(process_ppid, process_name), open=True )
-                    break;
 
-
+            if (TRVIEW == ON):
+                items = item_dictionary
+                for key in items:
+                    if (key == process_ppid):
+                        item_dictionary[process_pid] = \
+                        self.trv_process.insert( item_dictionary[key], index=END, text=process_pid, values=(process_ppid, process_name), open=True )
+                        break
+            else:
+                self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name) )
 
             new_data = self.get_rows( "process" )
 
@@ -184,7 +240,7 @@ class GUI:
             else:
                 self.lbl_process_status.config( text="OK", fg="green" )
 
-            time.sleep( delay )
+            time.sleep( DELAY )
 
 
     """
@@ -195,7 +251,8 @@ class GUI:
     # input: 'delay' is the time that it prints a new list.
     # output: prints on text area the list of services.
     """
-    def writeServices( self, delay ):
+    def writeServices( self ):
+        global DELAY
         while True:
             old_data = self.get_rows( "service" )
             self.trv_service.delete(*self.trv_service.get_children())
@@ -212,7 +269,7 @@ class GUI:
             else:
                 self.lbl_service_status.config( text="OK", fg="green" )
 
-            time.sleep( delay )
+            time.sleep( DELAY )
 
     """
     # Return the rows of Treeview widget as a list.
@@ -332,6 +389,7 @@ class GUI:
     # output: the difference between list_one and list_two.
     """
     def checkDifferences( self, list_one, list_two, type ):
+        global SVCHANGES, ON
         list = []
         if (type == "process"):
             list.append("--Old-Processes--\n")
@@ -352,16 +410,18 @@ class GUI:
                 self.lbl_process_status.config( text="MODIFIED", fg="red" )
             else:
                 self.lbl_service_status.config( text="MODIFIED", fg="red" )
-            if not os.path.exists("%s changes" % type):
-                os.mkdir("%s changes" % type)
-            os.chdir("%s changes" % type)
-            file = open("changes, %s" % time.strftime("%c"), 'w')
-            file.truncate()
-            for element in list:
-                file.write("%s" % element)
-            file.close()
-            os.chmod("changes, %s" % time.strftime("%c"), S_IREAD)
-            os.chdir("..")
+
+            if (SVCHANGES == ON):
+                if not os.path.exists("%s changes" % type):
+                    os.mkdir("%s changes" % type)
+                os.chdir("%s changes" % type)
+                file = open("changes, %s" % time.strftime("%c"), 'w')
+                file.truncate()
+                for element in list:
+                    file.write("%s" % element)
+                file.close()
+                os.chmod("changes, %s" % time.strftime("%c"), S_IREAD)
+                os.chdir("..")
         else:
             if type == "process":
                 self.lbl_process_status.config( text="OK", fg="green" )
