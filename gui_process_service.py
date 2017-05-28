@@ -16,7 +16,8 @@ OFF = 0
 ON = 1
 TRVIEW = 0
 SVCHANGES = 0
-DELAY = 60
+DELAY = 10
+TERMINATE = None
 
 
 class GUI:
@@ -25,6 +26,9 @@ class GUI:
         # root frame
         self.root = Tk()
         self.root.title( "Currently running" )
+        self.root.wm_attributes("-topmost", 1)
+        self.root.resizable(width=False, height=False)
+
 
         # menu
         self.menu = Menu( self.root )
@@ -38,9 +42,9 @@ class GUI:
         self.view_menu.add_command( label="Track tool", command=lambda: self.save_changes_status() )
         self.view_menu.add_command( label="Refresh rate", command=lambda: self.refresh_list_delay() )
 
-
         self.menu.add_cascade(label="File", menu=self.file_menu)
         self.menu.add_cascade(label="View", menu=self.view_menu)
+
 
         self.root.config( menu=self.menu )
 
@@ -71,15 +75,22 @@ class GUI:
         self.trv_process.heading("#0", text="PID")
         self.trv_process.heading("#1", text="PPID")
         self.trv_process.heading("#2", text="NAME")
-        self.trv_process.column("#0", width=240)
-        self.trv_process.column("#1", width=60)
-        self.trv_process.column("#2", width=200)
+        self.trv_process.column("#0", width=80) #240
+        self.trv_process.column("#1", width=80)  #60
+        self.trv_process.column("#2", width=340) #200
+        self.trv_process.bind("<Button-1>", self.click_anywhere_to_unpost)
+        self.trv_process.bind("<Button-3>", self.terminate_menu)
         self.trv_process.pack()
 
         self.trv_service = Treeview( self.frame_service, height=30 )
         self.trv_service.heading("#0", text="NAME")
         self.trv_service.column("#0", width=500)
         self.trv_service.pack()
+
+
+        # right click menu
+        self.menu_right_click = Menu( self.trv_process, tearoff=0 )
+        self.menu_right_click.add_command( label="Terminate", command=lambda: self.click_on_terminate() )
 
 
         # labels
@@ -167,6 +178,9 @@ class GUI:
     '''Modify DELAY global variable.'''
     def refresh_list_delay( self ):
         window = Toplevel()
+        window.wm_attributes("-topmost", 1)
+        window.resizable(width=False, height=False)
+
         window.title( "Seconds" )
         box = Spinbox( window, from_=20, to=100, width=6 )
         box.pack( side = LEFT )
@@ -175,8 +189,28 @@ class GUI:
     def set_delay( self, window, box ):
         global DELAY
         DELAY = int(box.get())
-        print DELAY
         window.destroy()
+
+
+    '''Open popup menu to terminate the selected process.'''
+    def terminate_menu( self, event ):
+        global TERMINATE
+        id = self.trv_process.identify_row(event.y)
+        if id:
+            self.trv_process.selection_set(id)
+            children = self.trv_process.get_children(id)
+            self.menu_right_click.post( event.x_root, event.y_root )
+            TERMINATE = id
+    def click_on_terminate( self ):
+        global TERMINATE
+        self.menu_right_click.unpost()
+        pid = int(self.trv_process.item(TERMINATE)["text"])
+        os.system("kill -9 %s" % pid)
+
+
+    '''Click anywhere to uppost menu terminate'''
+    def click_anywhere_to_unpost( self, event ):
+        self.menu_right_click.unpost()
 
 
     """
@@ -190,6 +224,8 @@ class GUI:
     def writeProcesses( self ):
         global TRVIEW, ON, OFF, DELAY
         while True:
+            self.menu_right_click.unpost()
+
             old_data = self.get_rows( "process" )
             self.trv_process.delete(*self.trv_process.get_children())
 
@@ -197,27 +233,33 @@ class GUI:
             self.lbl_process_count.config( text="%s\t\t" % len(process_list) )
 
             item_dictionary = {}
+            temp_list = []
             for proc in process_list[:-1]:
-                try:
-                    process_pid = str(proc.as_dict(attrs=['pid']))[8:-1]
-                    process_ppid = str(proc.as_dict(attrs=['ppid']))[9:-1]
-                    process_name = str(proc.as_dict(attrs=['name']))[10:-2]
+                process_pid = str(proc.as_dict(attrs=['pid']))[8:-1]
+                process_ppid = str(proc.as_dict(attrs=['ppid']))[9:-1]
+                process_name = str(proc.as_dict(attrs=['name']))[10:-2]
 
-                    if (TRVIEW == ON):
-                        if (process_ppid == "0"):
+                if (TRVIEW == ON):
+                    self.set_tree_columns_width(240, 60, 200)
+                    if (process_ppid == "0"):
+                        item_dictionary[process_pid] = \
+                        self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name), open=True )
+                    else:
+                        items = item_dictionary
+                        index = 0
+                        for key in items:
+                            if (key == process_ppid):
+                                index = -1
+                                item_dictionary[process_pid] = \
+                                self.trv_process.insert( item_dictionary[key], index=END, text=process_pid, values=(process_ppid, process_name), open=True )
+                                break
+                        if index == 0:
                             item_dictionary[process_pid] = \
                             self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name), open=True )
-                        else:
-                            items = item_dictionary
-                            for key in items:
-                                if (key == process_ppid):
-                                    item_dictionary[process_pid] = \
-                                    self.trv_process.insert( item_dictionary[key], index=END, text=process_pid, values=(process_ppid, process_name), open=True )
-                                    break
-                    else:
-                        self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name) )
-                except NoSuchProcess:
-                    pass
+
+                else:
+                    self.set_tree_columns_width(80, 80, 340)
+                    self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name) )
 
             process_pid = str(process_list[-1].as_dict(attrs=['pid']))[8:-1]
             process_ppid = str(process_list[-1].as_dict(attrs=['ppid']))[9:-1]
@@ -230,6 +272,16 @@ class GUI:
                         item_dictionary[process_pid] = \
                         self.trv_process.insert( item_dictionary[key], index=END, text=process_pid, values=(process_ppid, process_name), open=True )
                         break
+                children = self.trv_process.get_children()
+                for child in children:
+                    items_pid = str(self.trv_process.item(child)['text'])
+                    items_info = self.trv_process.item(child)['values']
+                    for key in item_dictionary:
+                        if (key == str(items_info[0])):
+                            self.trv_process.delete(child)
+                            self.trv_process.insert( item_dictionary[key], index=END, text=items_pid, values=(items_info[0], items_info[1]), open=True )
+                            break
+
             else:
                 self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name) )
 
@@ -270,6 +322,14 @@ class GUI:
                 self.lbl_service_status.config( text="OK", fg="green" )
 
             time.sleep( DELAY )
+
+
+    '''Set width of treeview columns'''
+    def set_tree_columns_width( self, value_one, value_two, value_three ):
+        self.trv_process.column("#0", width=value_one)
+        self.trv_process.column("#1", width=value_two)
+        self.trv_process.column("#2", width=value_three)
+
 
     """
     # Return the rows of Treeview widget as a list.
@@ -350,6 +410,8 @@ class GUI:
     def openSeperateWindowsDifferences( self, type, file_data, gui_data ):
         # toplevel window
         window = Toplevel()
+        window.wm_attributes("-topmost", 1)
+        window.resizable(width=False, height=False)
 
         # frame
         frame_old = LabelFrame( window )
