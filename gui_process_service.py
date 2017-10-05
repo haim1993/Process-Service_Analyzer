@@ -18,7 +18,8 @@ TRVIEW = 0
 SVCHANGES = 0
 DELAY = 10
 TERMINATE = None
-
+PATH = ""
+LIST_CHANGES = []
 
 class GUI:
 
@@ -35,7 +36,7 @@ class GUI:
 
         self.file_menu = Menu( self.menu, tearoff=0 )
         self.file_menu.add_separator()
-        self.file_menu.add_command( label="Exit", command=lambda: os.system("killall python") )
+        self.file_menu.add_command( label="Exit", command=lambda: os.system("sudo killall python") )
 
         self.view_menu = Menu( self.menu, tearoff=0 )
         self.view_menu.add_command( label="Process view", command=lambda: self.tree_view_status() )
@@ -82,15 +83,35 @@ class GUI:
         self.trv_process.bind("<Button-3>", self.terminate_menu)
         self.trv_process.pack()
 
-        self.trv_service = Treeview( self.frame_service, height=30 )
-        self.trv_service.heading("#0", text="NAME")
-        self.trv_service.column("#0", width=500)
+        self.trv_service = Treeview( self.frame_service, columns=("#1", "#2", "#3", "#4"), height=30 )
+        self.trv_service.heading("#0", text="PID")
+        self.trv_service.heading("#1", text="NAME")
+        self.trv_service.heading("#2", text="CPU")
+        self.trv_service.heading("#3", text="MEM")
+        self.trv_service.heading("#4", text="PATH")
+        self.trv_service.column("#0", width=60)
+        self.trv_service.column("#1", width=160)
+        self.trv_service.column("#2", width=60)
+        self.trv_service.column("#3", width=60)
+        self.trv_service.column("#4", width=160)
+        self.trv_service.bind("<Button-1>", self.click_anywhere_to_unpost)
+        self.trv_service.bind("<Button-3>", self.service_menu)
         self.trv_service.pack()
 
 
         # right click menu
-        self.menu_right_click = Menu( self.trv_process, tearoff=0 )
-        self.menu_right_click.add_command( label="Terminate", command=lambda: self.click_on_terminate() )
+        self.menu_right_click_process = Menu( self.trv_process, tearoff=0 )
+        self.menu_right_click_process.add_command( label="Terminate", command=lambda: self.click_on_terminate() )
+
+        self.menu_right_click_service = Menu( self.trv_service, tearoff=0 )
+        self.menu_right_click_service.add_command( label="Open Folder", command=lambda: self.click_on_open() )
+
+
+        #image buttons
+        self.image_track = PhotoImage(file="track.png")
+        self.btn_track_process = Button( self.frame_button_process, command=lambda: self.openSeperateWindowsDifferences("process", LIST_CHANGES[0], LIST_CHANGES[1]),
+         state=DISABLED, image = self.image_track, width=18, height=18, relief=FLAT )
+        self.btn_track_process.pack( side = LEFT )
 
 
         # labels
@@ -137,7 +158,8 @@ class GUI:
             os.mkdir("application by haim")
         os.chdir("application by haim")
 
-        # write threads to text area & update every X seconds.
+
+        # write threads to treeview & update every X seconds.
         try:
             Thread(target=self.writeProcesses).start()
             Thread(target=self.writeServices).start()
@@ -194,23 +216,45 @@ class GUI:
 
     '''Open popup menu to terminate the selected process.'''
     def terminate_menu( self, event ):
+        self.menu_right_click_process.unpost()
         global TERMINATE
         id = self.trv_process.identify_row(event.y)
         if id:
             self.trv_process.selection_set(id)
-            children = self.trv_process.get_children(id)
-            self.menu_right_click.post( event.x_root, event.y_root )
+            child = self.trv_process.get_children(id)
+            self.menu_right_click_process.post( event.x_root, event.y_root )
             TERMINATE = id
     def click_on_terminate( self ):
         global TERMINATE
-        self.menu_right_click.unpost()
+        self.menu_right_click_process.unpost()
         pid = int(self.trv_process.item(TERMINATE)["text"])
-        os.system("kill -9 %s" % pid)
+        os.system("sudo kill -9 %s" % pid)
+
+
+    '''Open popup menu to open the selected service log file.'''
+    def service_menu( self, event ):
+        self.menu_right_click_service.unpost()
+        global PATH
+        id = self.trv_service.identify_row(event.y)
+        if id:
+            self.trv_service.selection_set(id)
+            path = str(self.trv_service.item(id)['values'][3])
+            if path != "--":
+                self.menu_right_click_service.post( event.x_root, event.y_root )
+                PATH = "/var/log%s" %path[1:]
+            else:
+                PATH = ""
+    def click_on_open( self ):
+        global PATH
+        self.menu_right_click_service.unpost()
+        if PATH is not "":
+            os.system("sudo nautilus %s" % PATH)
 
 
     '''Click anywhere to uppost menu terminate'''
     def click_anywhere_to_unpost( self, event ):
-        self.menu_right_click.unpost()
+        self.menu_right_click_process.unpost()
+        self.menu_right_click_service.unpost()
 
 
     """
@@ -224,7 +268,7 @@ class GUI:
     def writeProcesses( self ):
         global TRVIEW, ON, OFF, DELAY
         while True:
-            self.menu_right_click.unpost()
+            self.menu_right_click_process.unpost()
 
             old_data = self.get_rows( "process" )
             self.trv_process.delete(*self.trv_process.get_children())
@@ -234,36 +278,40 @@ class GUI:
 
             item_dictionary = {}
             temp_list = []
-            for proc in process_list[:-1]:
-                process_pid = str(proc.as_dict(attrs=['pid']))[8:-1]
-                process_ppid = str(proc.as_dict(attrs=['ppid']))[9:-1]
-                process_name = str(proc.as_dict(attrs=['name']))[10:-2]
+            try:
+                for proc in process_list[:-1]:
+                    process_pid = str(proc.as_dict(attrs=['pid']))[8:-1]
+                    process_ppid = str(proc.as_dict(attrs=['ppid']))[9:-1]
+                    process_name = str(proc.as_dict(attrs=['name']))[10:-2]
 
-                if (TRVIEW == ON):
-                    self.set_tree_columns_width(240, 60, 200)
-                    if (process_ppid == "0"):
-                        item_dictionary[process_pid] = \
-                        self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name), open=True )
-                    else:
-                        items = item_dictionary
-                        index = 0
-                        for key in items:
-                            if (key == process_ppid):
-                                index = -1
-                                item_dictionary[process_pid] = \
-                                self.trv_process.insert( item_dictionary[key], index=END, text=process_pid, values=(process_ppid, process_name), open=True )
-                                break
-                        if index == 0:
+                    if (TRVIEW == ON):
+                        self.set_tree_columns_width(240, 60, 200)
+                        if (process_ppid == "0"):
                             item_dictionary[process_pid] = \
                             self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name), open=True )
+                        else:
+                            items = item_dictionary
+                            index = 0
+                            for key in items:
+                                if (key == process_ppid):
+                                    index = -1
+                                    item_dictionary[process_pid] = \
+                                    self.trv_process.insert( item_dictionary[key], index=END, text=process_pid, values=(process_ppid, process_name), open=True )
+                                    break
+                            if index == 0:
+                                item_dictionary[process_pid] = \
+                                self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name), open=True )
 
-                else:
-                    self.set_tree_columns_width(80, 80, 340)
-                    self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name) )
+                    else:
+                        self.set_tree_columns_width(80, 80, 340)
+                        self.trv_process.insert( '', index=END, text=process_pid, values=(process_ppid, process_name) )
 
-            process_pid = str(process_list[-1].as_dict(attrs=['pid']))[8:-1]
-            process_ppid = str(process_list[-1].as_dict(attrs=['ppid']))[9:-1]
-            process_name = str(process_list[-1].as_dict(attrs=['name']))[10:-2]
+                process_pid = str(process_list[-1].as_dict(attrs=['pid']))[8:-1]
+                process_ppid = str(process_list[-1].as_dict(attrs=['ppid']))[9:-1]
+                process_name = str(process_list[-1].as_dict(attrs=['name']))[10:-2]
+
+            except psutil.NoSuchProcess:
+                pass
 
             if (TRVIEW == ON):
                 items = item_dictionary
@@ -306,13 +354,31 @@ class GUI:
     def writeServices( self ):
         global DELAY
         while True:
+            self.menu_right_click_service.unpost()
+
             old_data = self.get_rows( "service" )
             self.trv_service.delete(*self.trv_service.get_children())
 
-            service_list = os.popen('service --status-all | grep "+"').readlines()
+            service_list = os.popen('sudo service --status-all | grep "+"').readlines()
             self.lbl_service_count.config( text="%s\t\t" % len(service_list) )
             for serv in service_list:
-                    self.trv_service.insert( '', index=END, text=serv[8:-1] )
+                    service = serv[8:-1]
+                    pid_number = match_service_to_pid( service )
+                    information = ["--", "--"]
+                    if pid_number != "":
+                        information = get_cpu_and_memory_using_pid ( pid_number ) #cpu & memory usage
+                    cwd = os.getcwd()
+                    os.chdir("/var/log/")
+                    folder = os.popen( 'sudo find -type d -name "%s"' % service ).readlines()
+                    if len(folder) is 0:
+                        file_log = os.popen( 'sudo find -type f -name "%s.log"' % service ).readlines()
+                        if len(file_log) > 0:
+                            self.trv_service.insert( '', index=END, text=pid_number, values=(service, information[0], information[1], file_log[0]) )
+                        else:
+                            self.trv_service.insert( '', index=END, text=pid_number, values=(service, information[0], information[1], "--") )
+                    else:
+                        self.trv_service.insert( '', index=END, text=pid_number, values=(service, information[0], information[1], folder[0]) )
+                    os.chdir(cwd)
 
             new_data = self.get_rows( "service" )
 
@@ -347,10 +413,11 @@ class GUI:
             if (type == "process"):
                 item_text = str(self.trv_process.item(element)["text"])
                 item_values = self.trv_process.item(element)["values"]
-                data.append( "pid: %s\tppid: %s\t\tname: %s" % (item_text, item_values[0], item_values[1]) )
+                data.append( "pid: %s;\tppid: %s;\tname: %s;" % (item_text, item_values[0], item_values[1]) )
             else:
                 item_text = str(self.trv_service.item(element)["text"])
-                data.append( "name: %s" % item_text )
+                item_values = self.trv_service.item(element)["values"]
+                data.append( "pid: %s;\tname: %s;" % (item_text, item_values[0]) )
             index += 1
         return data
 
@@ -412,6 +479,10 @@ class GUI:
         window = Toplevel()
         window.wm_attributes("-topmost", 1)
         window.resizable(width=False, height=False)
+        if type == "process":
+            window.title("Changes in processes")
+        else:
+            window.title("Changes in services")
 
         # frame
         frame_old = LabelFrame( window )
@@ -420,25 +491,52 @@ class GUI:
         frame_new = LabelFrame( window )
         frame_new.pack()
 
-        # textarea
-        txt_area_old = Text( frame_old )
-        txt_area_new = Text( frame_new )
+        # treeview
+        trv_seperate_old = Treeview( frame_old )
+        trv_seperate_new = Treeview( frame_new )
 
         if (type == "process"):
+            trv_seperate_old.config( columns=("#1", "#2"), height=10 )
+            trv_seperate_old.heading("#0", text="PID")
+            trv_seperate_old.heading("#1", text="PPID")
+            trv_seperate_old.heading("#2", text="NAME")
+            trv_seperate_old.column("#0", width=80) #240
+            trv_seperate_old.column("#1", width=80)  #60
+            trv_seperate_old.column("#2", width=340) #200
+            trv_seperate_old.pack()
+
+            trv_seperate_new.config( columns=("#1", "#2"), height=10 )
+            trv_seperate_new.heading("#0", text="PID")
+            trv_seperate_new.heading("#1", text="PPID")
+            trv_seperate_new.heading("#2", text="NAME")
+            trv_seperate_new.column("#0", width=80) #240
+            trv_seperate_new.column("#1", width=80)  #60
+            trv_seperate_new.column("#2", width=340) #200
+            trv_seperate_new.pack()
+
             frame_old.config(text="Old Processes")
             frame_new.config(text="New Processes")
-            compareDifferences(file_data, gui_data, txt_area_old)
-            compareDifferences(gui_data, file_data, txt_area_new)
+            compareDifferences("process", file_data, gui_data, trv_seperate_old)
+            compareDifferences("process", gui_data, file_data, trv_seperate_new)
         else:
+            trv_seperate_old.config( columns=("#1"), height=10 )
+            trv_seperate_old.heading("#0", text="PID")
+            trv_seperate_old.heading("#1", text="NAME")
+            trv_seperate_old.column("#0", width=80)
+            trv_seperate_old.column("#1", width=420)
+            trv_seperate_old.pack()
+
+            trv_seperate_new.config( columns=("#1"), height=10 )
+            trv_seperate_new.heading("#0", text="PID")
+            trv_seperate_new.heading("#1", text="NAME")
+            trv_seperate_new.column("#0", width=80)
+            trv_seperate_new.column("#1", width=420)
+            trv_seperate_new.pack()
+
             frame_old.config(text="Old Services")
             frame_new.config(text="New Services")
-            compareDifferences(file_data, gui_data, txt_area_old)
-            compareDifferences(gui_data, file_data, txt_area_new)
-
-        txt_area_old.config( state=DISABLED )
-        txt_area_new.config( state=DISABLED )
-        txt_area_old.pack( side = LEFT )
-        txt_area_new.pack( side = LEFT )
+            compareDifferences("service", file_data, gui_data, trv_seperate_old)
+            compareDifferences("service", gui_data, file_data, trv_seperate_new)
 
         window.mainloop()
 
@@ -451,7 +549,7 @@ class GUI:
     # output: the difference between list_one and list_two.
     """
     def checkDifferences( self, list_one, list_two, type ):
-        global SVCHANGES, ON
+        global SVCHANGES, ON, LIST_CHANGES
         list = []
         if (type == "process"):
             list.append("--Old-Processes--\n")
@@ -469,7 +567,12 @@ class GUI:
 
         if len(list) > 2:
             if type == "process":
+                LIST_CHANGES = []
                 self.lbl_process_status.config( text="MODIFIED", fg="red" )
+                LIST_CHANGES.append(list_one)
+                LIST_CHANGES.append(list_two)
+                self.btn_track_process.config( state = 'normal' )
+
             else:
                 self.lbl_service_status.config( text="MODIFIED", fg="red" )
 
@@ -487,6 +590,7 @@ class GUI:
         else:
             if type == "process":
                 self.lbl_process_status.config( text="OK", fg="green" )
+                self.btn_track_process.config( state = DISABLED )
             else:
                 self.lbl_service_status.config( text="OK", fg="green" )
 
@@ -497,14 +601,63 @@ class GUI:
 # input: list_one is the first list. list_two is the second list.
 # output: the difference between list_one and list_two.
 """
-def compareDifferences(list_one, list_two, text):
+def compareDifferences(type, list_one, list_two, tree):
     for element in (set(list_one) - set(list_two)):
-        text.insert( INSERT, "%s\n" % element )
+        if type == "process":
+            start_pid = element.index("pid")
+            end_pid = element.index(";")
+            pid = element[start_pid:end_pid][5:]
+
+            start_ppid = element.index("ppid")
+            end_ppid = element.index(";", start_ppid)
+            ppid = element[start_ppid:end_ppid][6:]
+
+            start_name = element.index("name")
+            end_name = element.index(";", start_name)
+            name = element[start_name:end_name][6:]
+            tree.insert( '', index=END, text=pid, values=(ppid, name) )
+        else:
+            start_name = element.index("name")
+            end_name = element.index(";")
+            name = element[start_name:end_name][6:]
+            tree.insert( '', index=END, text=name )
+
+
+'''Get service name, and return pid number if exists of main process'''
+def match_service_to_pid( name ):
+    pid = os.popen('sudo service %s status | grep "PID"' % name).readlines()
+    if len(pid) == 0:
+        pid = os.popen('sudo service %s status | grep -i "process"' % name).readlines()
+        if len(pid) == 0:
+            return "--"
+        else:
+            pid_number = pid[0]
+            index_start = pid_number.index("Process:") + 9
+            index_end = pid_number.index(" Exec", index_start)
+            return pid_number[index_start:index_end]
+    else:
+        pid_number = pid[0]
+        index_start = pid_number.index("PID:") + 5
+        index_end = pid_number.index(" (", index_start)
+        return pid_number[index_start:index_end]
+
+
+'''Get cpu & memory usage using pid if exists. element[0] = cpu. element[1] = memory.'''
+def get_cpu_and_memory_using_pid( pid ):
+    list_information = os.popen('ps -p %s -o %s,%s' % (pid, "%cpu", "%mem")).readlines()
+    if len(list_information) < 2:
+        return ["--", "--"]
+    information = list_information[1][:-1]
+    cpu_end = information.index(" ", 1)
+    cpu = information[0:cpu_end]
+    memory_start = information.index("  ") + 2
+    memory = information[memory_start:]
+    return [cpu, memory]
 
 
 def main():
     GUI()
-
+    # print get_cpu_and_memory_using_pid( 18719 )
 
 if __name__ == '__main__':
     main()
